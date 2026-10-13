@@ -80,4 +80,58 @@ final class AdapterTest extends TestCase
         }
         $this->assertSame(['x', 'y'], $woke);
     }
+
+    public function testScopeActivatedOnSwitchAndOnReturnToMain(): void
+    {
+        $root = $_GET;
+        $seen = new \ArrayObject(); // an object: arrow fns capture by value
+        \async\run(function () use ($seen) {
+            $task = fn(string $name, float $delay) => (new \Scope())->run(fn() => \async\go(function () use ($name, $delay, $seen) {
+                $_GET = ['req' => $name];
+                for ($i = 0; $i < 2; $i++) {
+                    \async\sleep($delay);
+                    $seen[$name] = [...($seen[$name] ?? []), $_GET['req'] ?? null];
+                }
+            }));
+            \async\await_all([$task('a', 0.01), $task('b', 0.015)]);
+        });
+        $this->assertSame(['a' => ['a', 'a'], 'b' => ['b', 'b']], $seen->getArrayCopy());
+        $this->assertSame($root, $_GET, 'back in {main}, the root superglobals are live again');
+    }
+
+    public function testRawCoroutineWithScopeContextIsActivatedBySwitch(): void
+    {
+        $seen = [];
+        \async\run(function () use (&$seen) {
+            $cs = [];
+            foreach (['x' => 0.01, 'y' => 0.015] as $name => $delay) {
+                $cs[] = \phasync::go(function () use ($name, $delay, &$seen) {
+                    (new \Scope())->run(function () use ($name, $delay, &$seen) {
+                        $_GET = ['req' => $name];
+                        \phasync::sleep($delay);
+                        \phasync::sleep($delay);
+                        $seen[$name] = $_GET['req'] ?? null;
+                    });
+                }, [], new \FiberInterop\Phasync\ScopeContext());
+            }
+            foreach ($cs as $c) {
+                \phasync::await($c);
+            }
+        });
+        $this->assertSame(['x' => 'x', 'y' => 'y'], $seen);
+    }
+
+    public function testNoSwapWhenScopeUnchanged(): void
+    {
+        $ctx = new \FiberInterop\Phasync\ScopeContext();
+        (new \Scope())->run(function () use ($ctx) {
+            $_GET = ['k' => 1];
+            $ref = &$_GET; // a swap would rebind the superglobal's storage; the reference stays bound without one
+            $ctx->resume();
+            $ctx->resume();
+            $ref['k'] = 2;
+            $this->assertSame(['k' => 2], $_GET);
+            $this->assertFalse(\FiberInterop\Phasync\ScopeContext::$hooking);
+        });
+    }
 }

@@ -41,6 +41,35 @@ to whoever started it. A wait there runs as a coroutine while the foreign fiber 
 because `tick()` is written for the root loop. A nested `async\run()` inside such a fiber works the same way.
 Any api call outside `run()` throws `LogicException` (the api itself throws `NotInRunException` first).
 
+## Scope state
+
+`$_GET`, `$_POST`, `$_COOKIE` and `$_FILES` follow the current `\Scope` (polyfill, see `fiber-interop/scope`):
+the adapter calls `fiber_interop\scope\activate()` wherever phasync hands control to user code.
+
+| Where | How |
+|---|---|
+| every switch to an api task (`async\go()`), also to a raw `phasync::go()` coroutine inside it that has its own context | `FiberInterop\Phasync\ScopeContext` implements `phasync\Context\SwitchAwareInterface`; phasync calls `resume()` from the loop before a coroutine of that context runs after another context ran. The adapter gives every api task, and the outermost `phasync::run()`, its own `ScopeContext` |
+| after any adapter wait returns (`await`, `sleep`, `readable`, `writable`, thenables) | `activate()` in a `finally` (fallback; also covers the in-place loop of foreign fibers) |
+| outermost `run()` back in `{main}` | `activate()` after `phasync::run()` returns |
+
+phasync's only switch hook is per context, not global: it fires when the next coroutine's context differs from
+the one that ran last (and only if the next context is switch-aware). So:
+
+- Coroutines that share one context (every plain `phasync::go()` inherits its creator's) are NOT activated on
+  switches among themselves. Give them their own: `phasync::go($fn, [], new ScopeContext())`. A coroutine in a
+  context that is not switch-aware gets no hook at all; the previous one stays live until the next adapter call.
+- Raw code that starts `phasync::run()` itself from `{main}` must call `ScopeContext::activate()` after it returns.
+- While `resume()` runs (in the loop, outside any coroutine) the adapter's execution key provider tells `\Scope`
+  which coroutine is about to run.
+
+Probes (`php probes/scope-*.php`, each prints `ok` or the mismatch):
+
+- `scope-api.php` passes: api tasks have their own `ScopeContext`, and waits activate on return.
+- `scope-loop.php` passes written with `phasync::go` + `phasync::sleep` and no api, but only because each
+  coroutine is created with `new ScopeContext()` and `activate()` is called after `phasync::run()`. With plain
+  `phasync::go()` (`--plain`) it fails: interleaved coroutines of one context see each other's `$_GET`.
+- `scope-raw-fiber.php` passes through the polyfill's "most recently current" fallback.
+
 ## Limitations
 
 - Only tasks started through `async\go()` are counted when the outermost run decides it is idle; a bare

@@ -33,13 +33,23 @@ final class Adapter implements \async\Adapter
     /** @var list<\Fiber> */
     private array $services = [];
 
+    public function __construct()
+    {
+        // phasync's resume() hook runs in the loop: tell \Scope which coroutine is about to run.
+        if (\function_exists('fiber_interop\\scope\\set_execution_key_provider')) {
+            \fiber_interop\scope\set_execution_key_provider(
+                static fn() => ScopeContext::$hooking && \phasync::isRunning() ? \phasync::getLoop()->getCurrentFiber() : null
+            );
+        }
+    }
+
     public function go(\Closure $f): object
     {
         if (!$this->inCoroutine()) {
             // The api's run() starts its main task from {main}, then awaits it: the task starts there.
             return $this->pending[] = new Task($f);
         }
-        return \phasync::go($this->counted($f));
+        return \phasync::go($this->counted($f), [], new ScopeContext());
     }
 
     public function service(\Closure $f): object
@@ -70,24 +80,28 @@ final class Adapter implements \async\Adapter
     /** The outermost run: phasync::run() around the api's main task. */
     private function outermost(Task $t, float $timeout): mixed
     {
-        return \phasync::run(function () use ($t, $timeout) {
-            $this->startPending();
-            try {
-                return $this->awaitFiber($t->fiber, $timeout);
-            } finally {
-                // other tasks finish first; then the services, which run() must not wait for
-                while ($this->active > 0) {
-                    \phasync::awaitFlag($this->idle = new \stdClass());
-                }
-                $this->idle = null;
-                foreach ($this->services as $s) {
-                    if (!$s->isTerminated()) {
-                        \phasync::cancel($s);
+        try {
+            return \phasync::run(function () use ($t, $timeout) {
+                $this->startPending();
+                try {
+                    return $this->awaitFiber($t->fiber, $timeout);
+                } finally {
+                    // other tasks finish first; then the services, which run() must not wait for
+                    while ($this->active > 0) {
+                        \phasync::awaitFlag($this->idle = new \stdClass());
                     }
+                    $this->idle = null;
+                    foreach ($this->services as $s) {
+                        if (!$s->isTerminated()) {
+                            \phasync::cancel($s);
+                        }
+                    }
+                    $this->services = [];
                 }
-                $this->services = [];
-            }
-        });
+            }, [], new ScopeContext());
+        } finally {
+            ScopeContext::activate(); // back in {main}
+        }
     }
 
     public function canAwait(object $o): bool
@@ -116,7 +130,11 @@ final class Adapter implements \async\Adapter
     private function awaitFiber(\Fiber $fiber, float $timeout): mixed
     {
         try {
-            return \phasync::await($fiber, $timeout);
+            try {
+                return \phasync::await($fiber, $timeout);
+            } finally {
+                ScopeContext::activate();
+            }
         } catch (PhasyncTimeout $e) {
             if ($fiber->isTerminated()) {
                 throw $e; // the task itself failed with a timeout; rethrow unchanged
@@ -223,7 +241,11 @@ final class Adapter implements \async\Adapter
     {
         return $this->inLoop(static function () use ($wait, $timeout) {
             try {
-                return $wait();
+                try {
+                    return $wait();
+                } finally {
+                    ScopeContext::activate(); // fallback: the wait returned to this coroutine
+                }
             } catch (PhasyncTimeout $e) {
                 throw new Timeout(\sprintf('Timed out after %.3fs', $timeout ?? 0.0), 0, $e);
             } catch (PhasyncCancelled $e) {
@@ -260,6 +282,7 @@ final class Adapter implements \async\Adapter
         } finally {
             $props[0]->setValue($loop, $saved[0]);
             $props[1]->setValue($loop, $saved[1]);
+            ScopeContext::activate();
         }
         return \phasync::await($coroutine);
     }
@@ -272,7 +295,7 @@ final class Adapter implements \async\Adapter
 
     private function start(Task $t): \Fiber
     {
-        return $t->fiber ??= \phasync::go($this->counted($t->f));
+        return $t->fiber ??= \phasync::go($this->counted($t->f), [], new ScopeContext());
     }
 
     private function startPending(): void
