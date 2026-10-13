@@ -213,7 +213,8 @@ final class Adapter implements \async\Adapter
     /**
      * phasync allows one waiter per stream and direction; the api allows many. The first waiter
      * polls, later ones wait for its flag and then poll themselves (returning at once if the
-     * stream is still ready).
+     * stream is still ready). A local fclose() makes phasync throw IOException ('Stream closed'); that is
+     * turned into a normal return, any other IOException propagates.
      */
     private function waitStream(string $mode, mixed $resource, float $timeout): void
     {
@@ -227,7 +228,14 @@ final class Adapter implements \async\Adapter
             $flag = $this->streamWaiters[$key] = new \stdClass();
             $remaining = $timeout === \PHP_FLOAT_MAX ? $timeout : \max(0.0, $timeout - (\microtime(true) - $start));
             try {
-                $mode === 'r' ? \phasync::readable($resource, $remaining) : \phasync::writable($resource, $remaining);
+                if (\is_resource($resource)) {
+                    $mode === 'r' ? \phasync::readable($resource, $remaining) : \phasync::writable($resource, $remaining);
+                }
+            } catch (\phasync\IOException $e) {
+                // phasync detects a local fclose() itself and throws; the api wants a normal return then.
+                if (\is_resource($resource)) {
+                    throw $e;
+                }
             } finally {
                 unset($this->streamWaiters[$key]);
                 \phasync::raiseFlag($flag);

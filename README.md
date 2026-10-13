@@ -72,6 +72,7 @@ Probes (`php probes/scope-*.php`, each prints `ok` or the mismatch):
 
 ## Limitations
 
+- A local `fclose()` of a stream that fibers wait on is detected by phasync itself (`phasync\IOException: Stream closed`, immediately); the adapter turns that into a normal return of `readable()`/`writable()` when the resource is gone (other IOExceptions propagate), and wakes the extra waiters on the same stream through the flag chain.
 - Only tasks started through `async\go()` are counted when the outermost run decides it is idle; a bare
   `phasync::go()` coroutine is still waited for by `phasync::run()`, as phasync specifies.
 - phasync allows one reader and one writer per stream; the adapter serialises extra waiters on the same

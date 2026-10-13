@@ -169,4 +169,24 @@ final class AdapterTest extends TestCase
         });
         $this->assertTrue($done);
     }
+
+    public function testLocalCloseUnblocksWaitersNormally(): void
+    {
+        $woke = \async\run(function () {
+            [$a, $b] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+            $start = microtime(true);
+            $wait = function () use ($a, $start) {
+                \async\readable($a, 5.0);
+                return microtime(true) - $start;
+            };
+            $tasks = [\async\go($wait), \async\go($wait)];
+            \async\sleep(0.02);
+            fclose($a);
+            $woke = \async\await_all($tasks);
+            fclose($b);
+            return $woke;
+        });
+        $this->assertCount(2, $woke);
+        $this->assertLessThan(0.1, max($woke));
+    }
 }
