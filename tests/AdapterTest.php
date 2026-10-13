@@ -27,7 +27,7 @@ final class AdapterTest extends TestCase
         [$r, $w] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
         stream_set_blocking($r, false);
         $this->expectException(\async\TimeoutException::class);
-        $this->a->readable($r, 0.01);
+        \async\run(fn() => $this->a->readable($r, 0.01));
     }
 
     public function testCancelledIsApiCancelled(): void
@@ -50,8 +50,10 @@ final class AdapterTest extends TestCase
         $then = new class {
             public function then(callable $ok, callable $fail): void { $ok(42); $ok(43); }
         };
-        $this->assertSame(42, $this->a->await($then, 1.0));
-        $this->assertSame(42, $this->a->await($this->a->go(fn() => $this->a->await($then, 1.0)), 1.0));
+        \async\run(function () use ($then) {
+            $this->assertSame(42, $this->a->await($then, 1.0));
+            $this->assertSame(42, $this->a->await($this->a->go(fn() => $this->a->await($then, 1.0)), 1.0));
+        });
     }
 
     public function testRejectedNonThrowable(): void
@@ -60,7 +62,7 @@ final class AdapterTest extends TestCase
             public function then(callable $ok, callable $fail): void { $fail('nope'); }
         };
         $this->expectException(\async\RejectedException::class);
-        $this->a->await($then, 1.0);
+        \async\run(fn() => $this->a->await($then, 1.0));
     }
 
     public function testTwoFibersReadableOnOneStream(): void

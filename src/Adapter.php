@@ -13,6 +13,9 @@ use phasync\TimeoutException as PhasyncTimeout;
  * A phasync coroutine (the Fiber returned by phasync::go) is the awaitable. phasync's own
  * TimeoutException/CancelledException do not implement the api interfaces, so waits translate
  * them to async\Timeout / Cancelled (phasync's exception is kept as ->getPrevious()).
+ *
+ * Every call happens inside the api's run(). Its first call from {main} is go() (queued as a Task,
+ * phasync::go() needs a coroutine) and then await() of it, which wraps the one phasync::run().
  */
 final class Adapter implements \async\Adapter
 {
@@ -22,13 +25,69 @@ final class Adapter implements \async\Adapter
     /** @var array<string, object> flag raised when the polling waiter of a stream/direction is done */
     private array $streamWaiters = [];
 
+    /** @var int api tasks (go()) still running; the outermost run waits for them before stopping services */
+    private int $active = 0;
+
+    private ?object $idle = null;
+
+    /** @var list<\Fiber> */
+    private array $services = [];
+
     public function go(\Closure $f): object
     {
-        if ($this->inCoroutine()) {
-            return \phasync::go($f);
+        if (!$this->inCoroutine()) {
+            // The api's run() starts its main task from {main}, then awaits it: the task starts there.
+            return $this->pending[] = new Task($f);
         }
-        // phasync::go() needs a running coroutine; outside one the task starts with the next wait.
-        return $this->pending[] = new Task($f);
+        return \phasync::go($this->counted($f));
+    }
+
+    public function service(\Closure $f): object
+    {
+        $fiber = null;
+        \phasync::service(static function () use ($f, &$fiber) {
+            $fiber = \Fiber::getCurrent();
+            return $f();
+        });
+        // phasync::run() waits for services, the api's run() does not: the outermost run stops them.
+        return $this->services[] = $fiber;
+    }
+
+    private function counted(\Closure $f): \Closure
+    {
+        return function () use ($f) {
+            $this->active++;
+            try {
+                return $f();
+            } finally {
+                if (--$this->active === 0 && $this->idle !== null) {
+                    \phasync::raiseFlag($this->idle);
+                }
+            }
+        };
+    }
+
+    /** The outermost run: phasync::run() around the api's main task. */
+    private function outermost(Task $t, float $timeout): mixed
+    {
+        return \phasync::run(function () use ($t, $timeout) {
+            $this->startPending();
+            try {
+                return $this->awaitFiber($t->fiber, $timeout);
+            } finally {
+                // other tasks finish first; then the services, which run() must not wait for
+                while ($this->active > 0) {
+                    \phasync::awaitFlag($this->idle = new \stdClass());
+                }
+                $this->idle = null;
+                foreach ($this->services as $s) {
+                    if (!$s->isTerminated()) {
+                        \phasync::cancel($s);
+                    }
+                }
+                $this->services = [];
+            }
+        });
     }
 
     public function canAwait(object $o): bool
@@ -46,24 +105,29 @@ final class Adapter implements \async\Adapter
     public function await(object $o, float $timeout): mixed
     {
         if ($o instanceof Task || $o instanceof \Fiber) {
-            return $this->inLoop(function () use ($o, $timeout) {
-                $fiber = $o instanceof Task ? $this->start($o) : $o;
-                try {
-                    return \phasync::await($fiber, $timeout);
-                } catch (PhasyncTimeout $e) {
-                    if ($fiber->isTerminated()) {
-                        throw $e; // the task itself failed with a timeout; rethrow unchanged
-                    }
-                    throw new Timeout(\sprintf('Timed out after %.3fs', $timeout), 0, $e);
-                } catch (PhasyncCancelled $e) {
-                    if ($fiber->isTerminated()) {
-                        throw new Cancelled($e->getMessage(), 0, $e);
-                    }
-                    throw $e;
-                }
-            });
+            if ($o instanceof Task && !$this->inCoroutine() && !\phasync::isRunning()) {
+                return $this->outermost($o, $timeout);
+            }
+            return $this->inLoop(fn() => $this->awaitFiber($o instanceof Task ? $this->start($o) : $o, $timeout));
         }
         return $this->awaitThenable($o, $timeout);
+    }
+
+    private function awaitFiber(\Fiber $fiber, float $timeout): mixed
+    {
+        try {
+            return \phasync::await($fiber, $timeout);
+        } catch (PhasyncTimeout $e) {
+            if ($fiber->isTerminated()) {
+                throw $e; // the task itself failed with a timeout; rethrow unchanged
+            }
+            throw new Timeout(\sprintf('Timed out after %.3fs', $timeout), 0, $e);
+        } catch (PhasyncCancelled $e) {
+            if ($fiber->isTerminated()) {
+                throw new Cancelled($e->getMessage(), 0, $e);
+            }
+            throw $e;
+        }
     }
 
     private function awaitThenable(object $o, float $timeout): mixed
@@ -152,8 +216,8 @@ final class Adapter implements \async\Adapter
     }
 
     /**
-     * Run a wait. Inside a phasync coroutine it suspends that coroutine. Anywhere else ({main} or a
-     * fiber phasync does not own) the loop must be driven in place, so the wait runs in a phasync::run().
+     * Run a wait, translating phasync's timeout and cancellation. Inside a phasync coroutine it
+     * suspends that coroutine; in a fiber phasync does not own, the loop is driven in place.
      */
     private function wrap(\Closure $wait, ?float $timeout = null): mixed
     {
@@ -168,25 +232,36 @@ final class Adapter implements \async\Adapter
         });
     }
 
+    /**
+     * Run a wait from a fiber phasync does not own. Suspending it would only return control to
+     * whoever started it, so the wait runs as a coroutine while this fiber drives the loop in place.
+     */
     private function inLoop(\Closure $wait): mixed
     {
         if ($this->inCoroutine()) {
             return $wait();
         }
-        // An exception escaping phasync::run()'s main coroutine would cancel the tasks started here
-        // (a timeout must leave them running), so carry it out as a value.
-        [$ok, $value] = \phasync::run(function () use ($wait) {
-            $this->startPending();
-            try {
-                return [true, $wait()];
-            } catch (\Throwable $e) {
-                return [false, $e];
-            }
-        });
-        if (!$ok) {
-            throw $value;
+        if (!\phasync::isRunning()) {
+            throw new \LogicException('fiber-interop/phasync: called outside the event loop; use async\\run().');
         }
-        return $value;
+        $coroutine = \phasync::go(function () use ($wait) {
+            $this->startPending();
+            return $wait();
+        });
+        // tick() is written for the root and clears "the current coroutine" when it returns; this
+        // wait happens inside a coroutine (the one that started the foreign fiber), so put it back.
+        $loop = \phasync::getLoop();
+        $props = [new \ReflectionProperty($loop, 'currentFiber'), new \ReflectionProperty($loop, 'currentContext')];
+        $saved = [$props[0]->getValue($loop), $props[1]->getValue($loop)];
+        try {
+            while (!$coroutine->isTerminated()) {
+                $loop->tick();
+            }
+        } finally {
+            $props[0]->setValue($loop, $saved[0]);
+            $props[1]->setValue($loop, $saved[1]);
+        }
+        return \phasync::await($coroutine);
     }
 
     private function inCoroutine(): bool
@@ -197,7 +272,7 @@ final class Adapter implements \async\Adapter
 
     private function start(Task $t): \Fiber
     {
-        return $t->fiber ??= \phasync::go($t->f);
+        return $t->fiber ??= \phasync::go($this->counted($t->f));
     }
 
     private function startPending(): void
