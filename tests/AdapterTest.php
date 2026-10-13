@@ -134,4 +134,39 @@ final class AdapterTest extends TestCase
             $this->assertFalse(\FiberInterop\Phasync\ScopeContext::$hooking);
         });
     }
+
+    public function testRunWaitsForTaskSpawnedAfterParentReturned(): void
+    {
+        $done = false;
+        \async\run(function () use (&$done) {
+            \async\go(function () use (&$done) {
+                \async\go(function () use (&$done) {
+                    \async\sleep(0.02);
+                    \async\go(function () use (&$done) {
+                        \async\sleep(0.02);
+                        $done = true;
+                    });
+                });
+            });
+        });
+        $this->assertTrue($done);
+    }
+
+    public function testForeignFiberInsideTaskCanSleepAndSpawn(): void
+    {
+        $done = false;
+        \async\run(function () use (&$done) {
+            \async\go(function () use (&$done) {
+                $fiber = new \Fiber(function () use (&$done) {
+                    \async\sleep(0.01);
+                    \async\go(function () use (&$done) {
+                        \async\sleep(0.01);
+                        $done = true;
+                    });
+                });
+                $fiber->start();
+            });
+        });
+        $this->assertTrue($done);
+    }
 }

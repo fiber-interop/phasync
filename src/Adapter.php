@@ -28,13 +28,15 @@ final class Adapter implements \async\Adapter
     /** @var int api tasks (go()) still running; the outermost run waits for them before stopping services */
     private int $active = 0;
 
-    private ?object $idle = null;
+    /** raised whenever the count of running api tasks drops to zero; never replaced or destroyed while waited on */
+    private object $idle;
 
     /** @var list<\Fiber> */
     private array $services = [];
 
     public function __construct()
     {
+        $this->idle = new \stdClass();
         // phasync's resume() hook runs in the loop: tell \Scope which coroutine is about to run.
         if (\function_exists('fiber_interop\\scope\\set_execution_key_provider')) {
             \fiber_interop\scope\set_execution_key_provider(
@@ -45,7 +47,8 @@ final class Adapter implements \async\Adapter
 
     public function go(\Closure $f): object
     {
-        if (!$this->inCoroutine()) {
+        if (!$this->inCoroutine() && !\phasync::isRunning()) {
+            // (a foreign fiber inside a running loop can start coroutines directly)
             // The api's run() starts its main task from {main}, then awaits it: the task starts there.
             return $this->pending[] = new Task($f);
         }
@@ -70,7 +73,7 @@ final class Adapter implements \async\Adapter
             try {
                 return $f();
             } finally {
-                if (--$this->active === 0 && $this->idle !== null) {
+                if (--$this->active === 0) {
                     \phasync::raiseFlag($this->idle);
                 }
             }
@@ -88,9 +91,8 @@ final class Adapter implements \async\Adapter
                 } finally {
                     // other tasks finish first; then the services, which run() must not wait for
                     while ($this->active > 0) {
-                        \phasync::awaitFlag($this->idle = new \stdClass());
+                        \phasync::awaitFlag($this->idle);
                     }
-                    $this->idle = null;
                     foreach ($this->services as $s) {
                         if (!$s->isTerminated()) {
                             \phasync::cancel($s);

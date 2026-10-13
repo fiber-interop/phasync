@@ -81,6 +81,8 @@ Probes (`php probes/scope-*.php`, each prints `ok` or the mismatch):
 
 ## Tests
 
+The api's stress tier (`FIBER_INTEROP_STRESS_ITERATIONS=200 php vendor/fiber-interop/api/bin/fiber-interop-stress tests/bootstrap.php`) passes.
+
 ```
 vendor/bin/phpunit
 vendor/bin/fiber-interop-conformance tests/bootstrap.php
