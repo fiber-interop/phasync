@@ -216,4 +216,27 @@ final class AdapterTest extends TestCase
         $this->assertSame(['slept', 'ping'], $result);
         $this->assertLessThan(5.0, \microtime(true) - $t);
     }
+
+    /** exit() in a task unwinds run() with an uncatchable UnwindExit; run() must not wait for the other tasks. */
+    public function testExitInsideTaskTerminatesTheProcess(): void
+    {
+        $script = \sprintf(<<<'PHP'
+            <?php
+            require %s;
+            async\setup(new FiberInterop\Phasync\Adapter());
+            async\run(fn() => async\await_all([
+                async\go(function () { async\sleep(0.01); exit(3); }),
+                async\go(fn() => async\sleep(5)),
+            ]));
+            echo "not reached\n";
+            PHP, \var_export(__DIR__ . '/../vendor/autoload.php', true));
+        $file = \tempnam(\sys_get_temp_dir(), 'fi');
+        \file_put_contents($file, $script);
+        $t = \microtime(true);
+        \exec(\escapeshellarg(\PHP_BINARY) . ' ' . \escapeshellarg($file) . ' 2>&1', $out, $code);
+        \unlink($file);
+        $this->assertSame(3, $code, \implode("\n", $out));
+        $this->assertSame([], $out);
+        $this->assertLessThan(3.0, \microtime(true) - $t);
+    }
 }

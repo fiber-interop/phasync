@@ -86,9 +86,21 @@ final class Adapter implements \async\Adapter
         try {
             return \phasync::run(function () use ($t, $timeout) {
                 $this->startPending();
+                $settled = false;
                 try {
-                    return $this->awaitFiber($t->fiber, $timeout);
+                    $r = $this->awaitFiber($t->fiber, $timeout);
+                    $settled = true;
+                    return $r;
+                } catch (\Throwable $e) {
+                    $settled = true;
+                    throw $e;
                 } finally {
+                    if (!$settled) {
+                        // exit() in a task (or an aborted stdout pipe) unwinds through here as an uncatchable
+                        // UnwindExit: the other tasks never finish, so waiting for them would hang the exit.
+                        $this->services = [];
+                        return;
+                    }
                     // other tasks finish first; then the services, which run() must not wait for
                     while ($this->active > 0) {
                         \phasync::awaitFlag($this->idle);
