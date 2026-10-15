@@ -99,7 +99,7 @@ final class AdapterTest extends TestCase
         $this->assertSame($root, $_GET, 'back in {main}, the root superglobals are live again');
     }
 
-    public function testRawCoroutineWithScopeContextIsActivatedBySwitch(): void
+    public function testRawCoroutineScopeIsActivatedBySwitch(): void
     {
         $seen = [];
         \async\run(function () use (&$seen) {
@@ -112,27 +112,13 @@ final class AdapterTest extends TestCase
                         \phasync::sleep($delay);
                         $seen[$name] = $_GET['req'] ?? null;
                     });
-                }, [], new \FiberInterop\Phasync\ScopeContext());
+                });
             }
             foreach ($cs as $c) {
                 \phasync::await($c);
             }
         });
         $this->assertSame(['x' => 'x', 'y' => 'y'], $seen);
-    }
-
-    public function testNoSwapWhenScopeUnchanged(): void
-    {
-        $ctx = new \FiberInterop\Phasync\ScopeContext();
-        (new \Scope())->run(function () use ($ctx) {
-            $_GET = ['k' => 1];
-            $ref = &$_GET; // a swap would rebind the superglobal's storage; the reference stays bound without one
-            $ctx->resume();
-            $ctx->resume();
-            $ref['k'] = 2;
-            $this->assertSame(['k' => 2], $_GET);
-            $this->assertFalse(\FiberInterop\Phasync\ScopeContext::$hooking);
-        });
     }
 
     public function testRunWaitsForTaskSpawnedAfterParentReturned(): void
