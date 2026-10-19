@@ -2,7 +2,7 @@
 
 namespace FiberInterop\Phasync;
 
-/** Thrown in place of phasync's CancelledException, so callers can catch async\CancelledException. */
-final class Cancelled extends \RuntimeException implements \async\CancelledException
+/** Thrown in place of phasync's CancelledException, so callers can catch fiber\CancelledException. */
+final class Cancelled extends \RuntimeException implements \fiber\CancelledException
 {
 }

@@ -1,9 +1,9 @@
 <?php
-// Runtime-specific: the scenario with phasync primitives only (phasync::go + phasync::sleep, no async\ functions).
+// Runtime-specific: the scenario with phasync primitives only (phasync::go + phasync::sleep, no fiber\ functions).
 // phasync makes each coroutine's Scope current (and swaps the polyfill's superglobals) on every switch.
 require __DIR__ . '/../vendor/autoload.php';
 
-async\setup(new FiberInterop\Phasync\Adapter());
+fiber\setup(new FiberInterop\Phasync\Adapter());
 $root = $_GET;
 $bad = [];
 phasync::run(function () use (&$bad) {

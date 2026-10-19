@@ -1,14 +1,14 @@
 # fiber-interop/phasync
 
-Runs the [`fiber-interop/api`](../api) functions (`async\go`, `await`, `await_all`, `await_any`, `run`,
+Runs the [`fiber-interop/api`](../api) functions (`fiber\go`, `await`, `await_all`, `await_any`, `run`,
 `sleep`, `readable`, `writable`) on the [phasync](https://github.com/phasync/phasync) event loop.
 
 ```
 composer require fiber-interop/phasync
 ```
 
-Installing it is enough: `src/register.php` calls `async\register()`; the adapter is picked up on first use.
-With several adapters installed, call `async\setup(new FiberInterop\Phasync\Adapter())`.
+Installing it is enough: `src/register.php` calls `fiber\register()`; the adapter is picked up on first use.
+With several adapters installed, call `fiber\setup(new FiberInterop\Phasync\Adapter())`.
 
 ## Mapping
 
@@ -19,17 +19,17 @@ With several adapters installed, call `async\setup(new FiberInterop\Phasync\Adap
 | `await(Fiber)` | `phasync::await($fiber, $timeout)` |
 | `await(thenable)` | `then()` callbacks raise a flag (`raiseFlag` / `awaitFlag`), first settle wins, a helper coroutine implements the timeout and is cancelled afterwards |
 | `sleep` / `readable` / `writable` | `phasync::sleep` / `readable` / `writable` |
-| `Timeout` | phasync's `TimeoutException` is translated to `async\Timeout` (phasync's exception is `getPrevious()`) |
-| `CancelledException` | phasync's `CancelledException` is translated to `FiberInterop\Phasync\Cancelled` (implements `async\CancelledException`) |
+| `Timeout` | phasync's `TimeoutException` is translated to `fiber\Timeout` (phasync's exception is `getPrevious()`) |
+| `CancelledException` | phasync's `CancelledException` is translated to `FiberInterop\Phasync\Cancelled` (implements `fiber\CancelledException`) |
 
 phasync's `TimeoutException` and `CancelledException` are wrapped only until phasync implements the api interfaces itself; then the translation goes away.
 
 A task that itself fails with a phasync `TimeoutException` is rethrown unchanged, as is every other exception.
 
-The api guarantees every call happens inside `async\run()`, whose first steps from `{main}` are `go()` and
+The api guarantees every call happens inside `fiber\run()`, whose first steps from `{main}` are `go()` and
 `await()` of that task. So the adapter itself issues one `phasync::run()`, the outermost: `go()` from `{main}`
 returns a queued `Task`, and the `await()` of it wraps the `phasync::run()` that starts it. Everything else runs
-in phasync coroutines, and a task's exception reaches `async\run()` as phasync delivers it. (`phasync::run()`
+in phasync coroutines, and a task's exception reaches `fiber\run()` as phasync delivers it. (`phasync::run()`
 nests freely: a library may call it itself, and inside a parent run it cooperates with that run's coroutines.)
 
 `service()` uses `phasync::service()` and returns that coroutine. The outermost `phasync::run()` waits for every
@@ -37,7 +37,7 @@ coroutine started inside it, then cancels the services (write them to be restart
 
 A Fiber phasync did not create (started inside `run()`) cannot be suspended: suspending it would only return
 to whoever started it. A wait there runs as a coroutine while the foreign fiber drives phasync's loop in place
-(`EventLoop::tick()`, which puts the interrupted coroutine back when it returns). A nested `async\run()` inside such a fiber works the same way.
+(`EventLoop::tick()`, which puts the interrupted coroutine back when it returns). A nested `fiber\run()` inside such a fiber works the same way.
 Any api call outside `run()` throws `LogicException` (the api itself throws `NotInRunException` first).
 
 ## Scope state

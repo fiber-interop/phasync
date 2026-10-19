@@ -18,7 +18,7 @@ final class AdapterTest extends TestCase
     public function testAwaitTimeoutIsApiTimeout(): void
     {
         $t = $this->a->go(function () { $this->a->sleep(0.2); });
-        $this->expectException(\async\TimeoutException::class);
+        $this->expectException(\fiber\TimeoutException::class);
         $this->a->await($t, 0.01);
     }
 
@@ -26,8 +26,8 @@ final class AdapterTest extends TestCase
     {
         [$r, $w] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
         stream_set_blocking($r, false);
-        $this->expectException(\async\TimeoutException::class);
-        \async\run(fn() => $this->a->readable($r, 0.01));
+        $this->expectException(\fiber\TimeoutException::class);
+        \fiber\run(fn() => $this->a->readable($r, 0.01));
     }
 
     public function testCancelledIsApiCancelled(): void
@@ -37,7 +37,7 @@ final class AdapterTest extends TestCase
             \phasync::go(function () use ($inner) { \phasync::cancel($inner); });
             try {
                 $this->a->await($inner, 5);
-            } catch (\async\CancelledException $e) {
+            } catch (\fiber\CancelledException $e) {
                 return get_class($e);
             }
             return 'not cancelled';
@@ -50,7 +50,7 @@ final class AdapterTest extends TestCase
         $then = new class {
             public function then(callable $ok, callable $fail): void { $ok(42); $ok(43); }
         };
-        \async\run(function () use ($then) {
+        \fiber\run(function () use ($then) {
             $this->assertSame(42, $this->a->await($then, 1.0));
             $this->assertSame(42, $this->a->await($this->a->go(fn() => $this->a->await($then, 1.0)), 1.0));
         });
@@ -61,8 +61,8 @@ final class AdapterTest extends TestCase
         $then = new class {
             public function then(callable $ok, callable $fail): void { $fail('nope'); }
         };
-        $this->expectException(\async\RejectedException::class);
-        \async\run(fn() => $this->a->await($then, 1.0));
+        $this->expectException(\fiber\RejectedException::class);
+        \fiber\run(fn() => $this->a->await($then, 1.0));
     }
 
     public function testTwoFibersReadableOnOneStream(): void
@@ -85,15 +85,15 @@ final class AdapterTest extends TestCase
     {
         $root = $_GET;
         $seen = new \ArrayObject(); // an object: arrow fns capture by value
-        \async\run(function () use ($seen) {
-            $task = fn(string $name, float $delay) => (new \Scope())->run(fn() => \async\go(function () use ($name, $delay, $seen) {
+        \fiber\run(function () use ($seen) {
+            $task = fn(string $name, float $delay) => (new \Scope())->run(fn() => \fiber\go(function () use ($name, $delay, $seen) {
                 $_GET = ['req' => $name];
                 for ($i = 0; $i < 2; $i++) {
-                    \async\sleep($delay);
+                    \fiber\sleep($delay);
                     $seen[$name] = [...($seen[$name] ?? []), $_GET['req'] ?? null];
                 }
             }));
-            \async\await_all([$task('a', 0.01), $task('b', 0.015)]);
+            \fiber\await_all([$task('a', 0.01), $task('b', 0.015)]);
         });
         $this->assertSame(['a' => ['a', 'a'], 'b' => ['b', 'b']], $seen->getArrayCopy());
         $this->assertSame($root, $_GET, 'back in {main}, the root superglobals are live again');
@@ -102,7 +102,7 @@ final class AdapterTest extends TestCase
     public function testRawCoroutineScopeIsActivatedBySwitch(): void
     {
         $seen = [];
-        \async\run(function () use (&$seen) {
+        \fiber\run(function () use (&$seen) {
             $cs = [];
             foreach (['x' => 0.01, 'y' => 0.015] as $name => $delay) {
                 $cs[] = \phasync::go(function () use ($name, $delay, &$seen) {
@@ -124,12 +124,12 @@ final class AdapterTest extends TestCase
     public function testRunWaitsForTaskSpawnedAfterParentReturned(): void
     {
         $done = false;
-        \async\run(function () use (&$done) {
-            \async\go(function () use (&$done) {
-                \async\go(function () use (&$done) {
-                    \async\sleep(0.02);
-                    \async\go(function () use (&$done) {
-                        \async\sleep(0.02);
+        \fiber\run(function () use (&$done) {
+            \fiber\go(function () use (&$done) {
+                \fiber\go(function () use (&$done) {
+                    \fiber\sleep(0.02);
+                    \fiber\go(function () use (&$done) {
+                        \fiber\sleep(0.02);
                         $done = true;
                     });
                 });
@@ -141,12 +141,12 @@ final class AdapterTest extends TestCase
     public function testForeignFiberInsideTaskCanSleepAndSpawn(): void
     {
         $done = false;
-        \async\run(function () use (&$done) {
-            \async\go(function () use (&$done) {
+        \fiber\run(function () use (&$done) {
+            \fiber\go(function () use (&$done) {
                 $fiber = new \Fiber(function () use (&$done) {
-                    \async\sleep(0.01);
-                    \async\go(function () use (&$done) {
-                        \async\sleep(0.01);
+                    \fiber\sleep(0.01);
+                    \fiber\go(function () use (&$done) {
+                        \fiber\sleep(0.01);
                         $done = true;
                     });
                 });
@@ -158,17 +158,17 @@ final class AdapterTest extends TestCase
 
     public function testLocalCloseUnblocksWaitersNormally(): void
     {
-        $woke = \async\run(function () {
+        $woke = \fiber\run(function () {
             [$a, $b] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
             $start = microtime(true);
             $wait = function () use ($a, $start) {
-                \async\readable($a, 5.0);
+                \fiber\readable($a, 5.0);
                 return microtime(true) - $start;
             };
-            $tasks = [\async\go($wait), \async\go($wait)];
-            \async\sleep(0.02);
+            $tasks = [\fiber\go($wait), \fiber\go($wait)];
+            \fiber\sleep(0.02);
             fclose($a);
-            $woke = \async\await_all($tasks);
+            $woke = \fiber\await_all($tasks);
             fclose($b);
             return $woke;
         });
@@ -180,24 +180,24 @@ final class AdapterTest extends TestCase
     public function testAwaitResolvedOnlyByService(): void
     {
         $t = \microtime(true);
-        $result = \async\run(function () {
-            $timer = new \async\Deferred();
-            \async\service(function () use ($timer) {
-                \async\sleep(0.02);
+        $result = \fiber\run(function () {
+            $timer = new \fiber\Deferred();
+            \fiber\service(function () use ($timer) {
+                \fiber\sleep(0.02);
                 $timer->settle(true, 'slept');
-                \async\sleep(30); // a sleeping service must not keep run() alive
+                \fiber\sleep(30); // a sleeping service must not keep run() alive
             });
             [$a, $b] = \stream_socket_pair(\STREAM_PF_UNIX, \STREAM_SOCK_STREAM, \STREAM_IPPROTO_IP);
-            $io = new \async\Deferred();
-            \async\service(function () use ($a, $io) {
-                \async\readable($a, 5.0);
+            $io = new \fiber\Deferred();
+            \fiber\service(function () use ($a, $io) {
+                \fiber\readable($a, 5.0);
                 $io->settle(true, \fread($a, 10));
             });
-            \async\service(function () use ($b) {
-                \async\sleep(0.02);
+            \fiber\service(function () use ($b) {
+                \fiber\sleep(0.02);
                 \fwrite($b, 'ping');
             });
-            return [\async\await($timer), \async\await($io)];
+            return [\fiber\await($timer), \fiber\await($io)];
         });
         $this->assertSame(['slept', 'ping'], $result);
         $this->assertLessThan(5.0, \microtime(true) - $t);
@@ -209,10 +209,10 @@ final class AdapterTest extends TestCase
         $script = \sprintf(<<<'PHP'
             <?php
             require %s;
-            async\setup(new FiberInterop\Phasync\Adapter());
-            async\run(fn() => async\await_all([
-                async\go(function () { async\sleep(0.01); exit(3); }),
-                async\go(fn() => async\sleep(5)),
+            fiber\setup(new FiberInterop\Phasync\Adapter());
+            fiber\run(fn() => fiber\await_all([
+                fiber\go(function () { fiber\sleep(0.01); exit(3); }),
+                fiber\go(fn() => fiber\sleep(5)),
             ]));
             echo "not reached\n";
             PHP, \var_export(__DIR__ . '/../vendor/autoload.php', true));

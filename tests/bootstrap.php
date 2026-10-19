@@ -7,4 +7,4 @@ if (!class_exists('Scope')) {
         require_once $stub;
     }
 }
-async\setup(new FiberInterop\Phasync\Adapter());
+fiber\setup(new FiberInterop\Phasync\Adapter());

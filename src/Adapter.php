@@ -2,8 +2,8 @@
 
 namespace FiberInterop\Phasync;
 
-use async\RejectedException;
-use async\Timeout;
+use fiber\RejectedException;
+use fiber\Timeout;
 use phasync\CancelledException as PhasyncCancelled;
 use phasync\TimeoutException as PhasyncTimeout;
 
@@ -12,12 +12,12 @@ use phasync\TimeoutException as PhasyncTimeout;
  *
  * A phasync coroutine (the Fiber returned by phasync::go) is the awaitable. phasync's own
  * TimeoutException/CancelledException do not implement the api interfaces, so waits translate
- * them to async\Timeout / Cancelled (phasync's exception is kept as ->getPrevious()).
+ * them to fiber\Timeout / Cancelled (phasync's exception is kept as ->getPrevious()).
  *
  * Every call happens inside the api's run(). Its first call from {main} is go() (queued as a Task,
  * phasync::go() needs a coroutine) and then await() of it, which wraps the one phasync::run().
  */
-final class Adapter implements \async\Adapter
+final class Adapter implements \fiber\Adapter
 {
     /** @var list<Task> tasks created by go() outside any coroutine, not yet started */
     private array $pending = [];
@@ -213,7 +213,7 @@ final class Adapter implements \async\Adapter
             return $wait();
         }
         if (!\phasync::isRunning()) {
-            throw new \LogicException('fiber-interop/phasync: called outside the event loop; use async\\run().');
+            throw new \LogicException('fiber-interop/phasync: called outside the event loop; use fiber\\run().');
         }
         $coroutine = \phasync::go(function () use ($wait) {
             $this->startPending();

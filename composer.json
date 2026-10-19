@@ -5,7 +5,7 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
-        "fiber-interop/api": "^0.2",
+        "fiber-interop/api": "^0.3",
         "phasync/phasync": "^2.0.0-beta9",
         "fiber-interop/scope": "^0.2 || ^0.3"
     },
@@ -29,7 +29,7 @@
     "prefer-stable": true,
     "extra": {
         "branch-alias": {
-            "dev-main": "0.3.x-dev"
+            "dev-main": "0.4.x-dev"
         }
     }
 }
