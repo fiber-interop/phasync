@@ -7,7 +7,7 @@
         "php": "^8.2",
         "fiber-interop/api": "^0.2",
         "phasync/phasync": "^2.0.0-beta9",
-        "fiber-interop/scope": "^0.2"
+        "fiber-interop/scope": "^0.2 || ^0.3"
     },
     "require-dev": {
         "phpunit/phpunit": "^10.5 || ^11"
