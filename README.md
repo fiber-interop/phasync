@@ -27,9 +27,10 @@ phasync's `TimeoutException` and `CancelledException` are wrapped only until pha
 A task that itself fails with a phasync `TimeoutException` is rethrown unchanged, as is every other exception.
 
 The api guarantees every call happens inside `async\run()`, whose first steps from `{main}` are `go()` and
-`await()` of that task. So there is exactly one `phasync::run()`, the outermost: `go()` from `{main}` returns a
-queued `Task`, and the `await()` of it wraps the `phasync::run()` that starts it. Everything else runs in
-phasync coroutines, and a task's exception reaches `async\run()` as phasync delivers it.
+`await()` of that task. So the adapter itself issues one `phasync::run()`, the outermost: `go()` from `{main}`
+returns a queued `Task`, and the `await()` of it wraps the `phasync::run()` that starts it. Everything else runs
+in phasync coroutines, and a task's exception reaches `async\run()` as phasync delivers it. (`phasync::run()`
+nests freely: a library may call it itself, and inside a parent run it cooperates with that run's coroutines.)
 
 `service()` uses `phasync::service()` and returns that coroutine. The outermost `phasync::run()` waits for every
 coroutine started inside it, then cancels the services (write them to be restartable, as the api asks).
