@@ -25,6 +25,9 @@ final class Adapter implements \fiber\Adapter
     /** @var array<string, object> flag raised when the polling waiter of a stream/direction is done */
     private array $streamWaiters = [];
 
+    /** @var ?\WeakMap<\Fiber, Task> coroutines started for a pending Task: their handle is the Task, not the Fiber */
+    private ?\WeakMap $started = null;
+
     public function go(\Closure $f): object
     {
         if (!$this->inCoroutine() && !\phasync::isRunning()) {
@@ -33,6 +36,20 @@ final class Adapter implements \fiber\Adapter
             return $this->pending[] = new Task($f);
         }
         return \phasync::go($f);
+    }
+
+    /**
+     * fiber\current(): the handle go() returned for the running coroutine. phasync::go() runs a
+     * new coroutine before returning, so the api cannot know the handle in that first stretch;
+     * here it is the Fiber itself, or the Task for a go() issued from {main}.
+     */
+    public function current(): ?object
+    {
+        if (!$this->inCoroutine()) {
+            return null;
+        }
+        $fiber = \Fiber::getCurrent();
+        return $this->started[$fiber] ?? $fiber;
     }
 
     public function service(\Closure $f): object
@@ -235,7 +252,13 @@ final class Adapter implements \fiber\Adapter
 
     private function start(Task $t): \Fiber
     {
-        return $t->fiber ??= \phasync::go($t->f);
+        return $t->fiber ??= \phasync::go(function () use ($t) {
+            // recorded before $f runs: current() inside it must already be the Task
+            $this->started ??= new \WeakMap();
+            $this->started[\Fiber::getCurrent()] = $t;
+
+            return ($t->f)();
+        });
     }
 
     private function startPending(): void
