@@ -52,6 +52,21 @@ final class Adapter implements \fiber\Adapter
         return $this->started[$fiber] ?? $fiber;
     }
 
+    /**
+     * fiber\cancel() of a waiting task: phasync's sticky cancellation with the api's reason. phasync
+     * drops what the coroutine waits on (timer, stream, flag) and resumes it with $reason; a
+     * coroutine already woken meets it at its next phasync wait, which also covers the inner
+     * waits of waitStream() and awaitThenable(). phasync::cancel() only takes its own
+     * CancelledException, so the loop's cancel() is used to keep $reason the same object.
+     */
+    public function cancel(object $task, \fiber\CancelledException $reason): void
+    {
+        $fiber = $task instanceof Task ? $task->fiber : $task;
+        if ($fiber instanceof \Fiber && !$fiber->isTerminated()) {
+            \phasync::getLoop()->cancel($fiber, $reason);
+        }
+    }
+
     public function service(\Closure $f): object
     {
         // the outermost phasync::run() cancels services once its frame has no coroutine left

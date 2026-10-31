@@ -1,7 +1,7 @@
 # fiber-interop/phasync
 
 Runs the [`fiber-interop/api`](../api) functions (`fiber\go`, `await`, `await_all`, `await_any`, `run`,
-`sleep`, `readable`, `writable`) on the [phasync](https://github.com/phasync/phasync) event loop.
+`sleep`, `readable`, `writable`, `current`, `cancel`) on the [phasync](https://github.com/phasync/phasync) event loop.
 
 ```
 composer require fiber-interop/phasync
@@ -19,6 +19,7 @@ With several adapters installed, call `fiber\setup(new FiberInterop\Phasync\Adap
 | `await(Fiber)` | `phasync::await($fiber, $timeout)` |
 | `await(thenable)` | `then()` callbacks raise a flag (`raiseFlag` / `awaitFlag`), first settle wins, a helper coroutine implements the timeout and is cancelled afterwards |
 | `sleep` / `readable` / `writable` | `phasync::sleep` / `readable` / `writable` |
+| `cancel()` | the loop's sticky cancellation (`phasync::getLoop()->cancel($fiber, $reason)`): phasync drops the timer, stream watcher or flag the task waits on and resumes it with the api's reason, the same object |
 | `Timeout` | phasync's `TimeoutException` is translated to `fiber\Timeout` (phasync's exception is `getPrevious()`) |
 | `CancelledException` | phasync's `CancelledException` is translated to `FiberInterop\Phasync\Cancelled` (implements `fiber\CancelledException`) |
 
