@@ -252,10 +252,17 @@ final class Adapter implements \fiber\Adapter
 
     private function start(Task $t): \Fiber
     {
-        return $t->fiber ??= \phasync::go(function () use ($t) {
-            // recorded before $f runs: current() inside it must already be the Task
+        if ($t->fiber !== null) {
+            return $t->fiber;
+        }
+        // phasync::go() runs the body up to its first suspension before it returns, so the Task's
+        // fiber is recorded inside the body: an await($task) issued from within (a child awaiting
+        // its parent's current() handle) must find it there and not start the body again.
+        return \phasync::go(function () use ($t) {
+            $fiber = \Fiber::getCurrent();
+            $t->fiber = $fiber;
             $this->started ??= new \WeakMap();
-            $this->started[\Fiber::getCurrent()] = $t;
+            $this->started[$fiber] = $t;
 
             return ($t->f)();
         });
