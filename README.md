@@ -62,11 +62,11 @@ Probes (`php probes/scope-*.php`, each prints `ok` or the mismatch):
 - phasync allows one reader and one writer per stream; the adapter serialises extra waiters on the same
   stream and direction (all of them wake when the stream is ready), but only among adapter calls.
 - Streams must be non-blocking for `readable`/`writable` to wait.
-- Requires PHP ^8.2 (phasync's floor) and phasync 2.0.0-beta9 or later (adapter 0.3; 0.2 targets the context API of earlier betas).
+- Requires PHP ^8.2 (phasync's floor) and phasync ^2.0 (verified on 2.0.8; adapter 0.2 targets the context API of the early betas).
 
 ## Tests
 
-The api's stress tier (`FIBER_INTEROP_STRESS_ITERATIONS=200 php vendor/fiber-interop/api/bin/fiber-interop-stress tests/bootstrap.php`) passes.
+The api's stress tier (`FIBER_INTEROP_STRESS_ITERATIONS=200 php vendor/fiber-interop/api/bin/fiber-interop-stress tests/bootstrap.php`) passes 4 of its 6 tests; `OrderingTest::testRepeatableAwaitUnderContention` (awaiters see different value objects) and `ReadinessTest::testReadersContendingOnOneStream` ("The Fiber is already scheduled") fail on phasync 2.0.8, with and without the extension.
 
 ```
 vendor/bin/phpunit
